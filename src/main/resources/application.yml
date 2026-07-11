@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: github-repo-scorer
+
+server:
+  port: 8080
+
+github:
+  # Base URL of the GitHub REST API.
+  base-url: https://api.github.com
+  # Optional personal access token. Raises search rate limit from 10 to 30 req/min.
+  # Provide via GITHUB_TOKEN env var; leave blank for unauthenticated access.
+  token: ${GITHUB_TOKEN:}
+  # Per-page size for the search endpoint (GitHub max: 100).
+  page-size: 100
+  # Hard cap on repositories fetched across pages (GitHub caps search at 1000).
+  max-results: 100
+  # HTTP timeouts.
+  connect-timeout: 5s
+  read-timeout: 10s
+
+scoring:
+  # Weights applied to the normalized factors. Must sum to 1.0.
+  weights:
+    stars: 0.5
+    forks: 0.3
+    recency: 0.2
+  # Log-saturation ceilings: the value at which a factor reaches ~full score.
+  saturation:
+    stars: 50000
+    forks: 10000
+  # Half-life (in days) of the recency decay: a repo pushed this long ago
+  # scores 0.5 on the recency factor.
+  recency-half-life-days: 180
