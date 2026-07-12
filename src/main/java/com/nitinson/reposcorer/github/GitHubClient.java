@@ -9,7 +9,12 @@ import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+
+import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
 @Component
 public class GitHubClient {
@@ -64,16 +69,23 @@ public class GitHubClient {
     }
 
     private GitHubSearchResponse fetchPage(String query, int page) {
-        return restClient.get()
-                .uri(uriBuilder -> uriBuilder
-                        .path("/search/repositories")
-                        .queryParam("q", query)
-                        .queryParam("per_page", properties.pageSize())
-                        .queryParam("page", page)
-                        .build())
-                .accept(MediaType.APPLICATION_JSON)
-                .retrieve()
-                .body(GitHubSearchResponse.class);
+        try {
+            return restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/search/repositories")
+                            .queryParam("q", query)
+                            .queryParam("per_page", properties.pageSize())
+                            .queryParam("page", page)
+                            .build())
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(GitHubSearchResponse.class);
+        } catch (RestClientResponseException e) {
+            throw new GitHubApiException(e.getStatusCode(),
+                    "GitHub search returned " + e.getStatusCode().value(), e);
+        } catch (ResourceAccessException e) {
+            throw new GitHubUnavailableException("GitHub search could not be completed", e);
+        }
     }
 
     private String buildQuery(LocalDate createdAfter, String language) {

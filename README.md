@@ -54,6 +54,16 @@ Returns repositories ranked by descending score:
 ]
 ```
 
+Errors come back with a consistent body (`timestamp`, `status`, `error`,
+`message`, `path`) and the following status mapping:
+
+| Status | When                                                              |
+|--------|-------------------------------------------------------------------|
+| `400`  | The request is invalid (missing/malformed `createdAfter`, `limit` out of range). |
+| `422`  | GitHub rejected the search query (echoed from GitHub's own `422`). |
+| `502`  | GitHub returned an error (e.g. `503`) or was otherwise unreachable. |
+| `504`  | The GitHub request timed out.                                     |
+
 ## Scoring
 
 Each repository receives a weighted popularity score on a scale of 0–100.
@@ -91,4 +101,5 @@ The service holds no server-side state, so it scales out horizontally behind a
 load balancer. GitHub is the bottleneck rather than the app itself: search is
 capped at 30 req/min with a token (10 without), so for heavier traffic the
 obvious next step is caching responses (e.g. Caffeine) keyed on the query
-params. Rate-limit responses from GitHub are surfaced to the caller as `429`.
+params. Caching would also soften GitHub's rate limit; surfacing GitHub's own
+rate-limit signal (`Retry-After`) back to callers as a `429` would be the follow-up.

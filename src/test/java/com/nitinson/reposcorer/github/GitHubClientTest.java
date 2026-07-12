@@ -8,6 +8,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
 class GitHubClientTest {
 
@@ -103,6 +106,41 @@ class GitHubClientTest {
 
         assertThat(repositories).extracting(GitHubRepository::fullName)
                 .containsExactly("a/1", "a/2", "b/1");
+    }
+
+    @Test
+    void translatesValidationErrorToGitHubApiException() {
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(422).withBody("{\"message\":\"Validation Failed\"}")));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOfSatisfying(GitHubApiException.class,
+                        e -> assertThat(e.status().value()).isEqualTo(422));
+    }
+
+    @Test
+    void translatesServiceUnavailableToGitHubApiException() {
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(503)));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOfSatisfying(GitHubApiException.class,
+                        e -> assertThat(e.status().value()).isEqualTo(503));
+    }
+
+    @Test
+    void translatesReadTimeoutToGitHubUnavailableException() {
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(okJson("{ \"total_count\": 0, \"items\": [] }").withFixedDelay(300)));
+
+        GitHubProperties shortReadTimeout = new GitHubProperties(server.baseUrl(), "", 100, 100,
+                Duration.ofSeconds(5), Duration.ofMillis(100));
+
+        assertThatThrownBy(() -> clientWith(shortReadTimeout)
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOf(GitHubUnavailableException.class);
     }
 
     private GitHubClient clientWith(GitHubProperties properties) {
