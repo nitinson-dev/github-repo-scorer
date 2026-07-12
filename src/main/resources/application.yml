@@ -25,10 +25,11 @@ scoring:
     stars: 0.5
     forks: 0.3
     recency: 0.2
-  # Log-saturation ceilings: the value at which a factor reaches ~full score.
-  saturation:
-    stars: 50000
-    forks: 10000
+  # Reference counts for log normalization: roughly the largest star/fork
+  # counts on GitHub today. A repo at this level scores ~1.0 on that factor.
+  reference:
+    stars: 400000
+    forks: 100000
   # Half-life (in days) of the recency decay: a repo pushed this long ago
   # scores 0.5 on the recency factor.
   recency-half-life-days: 180

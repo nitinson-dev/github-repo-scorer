@@ -58,18 +58,32 @@ Returns repositories ranked by descending score:
 
 Each repository receives a weighted popularity score on a scale of 0–100.
 
-Stars and forks use logarithmic normalization with an upper saturation
-threshold, `min(1, log1p(v) / log1p(SAT))`. This keeps a handful of mega-repos
-from dominating, and since it's an absolute curve rather than a batch-relative
-one, a repo's score doesn't change depending on what else came back in the same
-search.
+Stars and forks use logarithmic normalization, `log1p(v) / log1p(reference)`,
+where `reference` is roughly the largest star/fork count on GitHub today. The log
+gives diminishing returns so a handful of mega-repos don't dominate, and because
+it's an absolute curve rather than a batch-relative one, a repo's score doesn't
+change depending on what else came back in the same search. There's no hard
+plateau: a repo near the reference lands close to 1.0 without every large repo
+collapsing onto the same value. The factor is clamped at 1 for the rare repo that
+exceeds the reference.
 
-Recency is an exponential decay on `pushed_at`: `exp(-ageDays / halfLife)`.
+Recency is a half-life decay on `pushed_at`: `0.5 ^ (ageDays / halfLife)`, so a
+repo last pushed one half-life ago scores 0.5 on the recency factor.
 
 The final score is `100 * (wStars*starsN + wForks*forksN + wRecency*recencyN)`.
 The weights sum to 1 so that, with each normalized factor in `[0, 1]`, the score
-stays bounded within `[0, 100]` regardless of the inputs. Weights, saturation
-ceilings, and the recency half-life all live in `application.yml`.
+stays bounded within `[0, 100]` regardless of the inputs. Weights, reference
+counts, and the recency half-life all live in `application.yml`.
+
+The score is computed as a `double` and only rounded for display, so repos that
+look tied on the rounded value usually aren't when ranked. Where scores are
+genuinely equal, ranking falls back to stars, then forks, then most recent push
+for a stable ordering.
+
+The weights and normalization parameters are hand-picked heuristics, not learned
+from data — they aim for rankings that are intuitive and easy to tune. A
+production system would calibrate them against real usage or feedback, or move to
+a learned ranking model (learning-to-rank) if the extra machinery earned its keep.
 
 ## Scaling considerations
 
