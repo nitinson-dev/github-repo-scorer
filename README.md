@@ -137,3 +137,24 @@ capped at 30 req/min with a token (10 without), so for heavier traffic the
 obvious next step is caching responses (e.g. Caffeine) keyed on the query
 params. Caching would also soften GitHub's rate limit; surfacing GitHub's own
 rate-limit signal (`Retry-After`) back to callers as a `429` would be the follow-up.
+
+## Known trade-offs
+
+Edge cases I identified but deliberately left as-is, to keep the scope
+proportionate to the exercise:
+
+- **`limit` validation ceiling vs. actual cap.** `limit` is validated against a
+  fixed `@Max(100)`, while the effective cap is `github.max-results`. If
+  `max-results` is lowered below 100, a caller asking for more is silently
+  truncated with no signal. These two bounds should be the same number, and
+  truncation should probably be surfaced (e.g. a header) rather than silent.
+- **Pagination stability.** With the default config the client only ever fetches
+  a single page, so this is currently moot. If `github.page-size` were set below
+  `limit`, the client would page through GitHub's best-match ordering, which
+  isn't guaranteed stable across requests — so results could contain duplicates
+  or gaps. There's no cross-page de-duplication.
+- **Future / far-past `createdAfter`.** A future date is accepted and simply
+  yields an empty result; there's no `@PastOrPresent` guard. This seems
+  defensible rather than worth rejecting.
+- **`github.page-size > 100`.** Not validated; GitHub caps `per_page` at 100 and
+  would reject a larger value at runtime with a `422`.
