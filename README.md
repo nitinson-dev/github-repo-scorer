@@ -49,7 +49,7 @@ at `/v3/api-docs`.
 |----------------|----------|--------------------------------------------------------|
 | `createdAfter` | yes      | Earliest repository creation date (ISO `YYYY-MM-DD`).  |
 | `language`     | no       | Filter by primary language (e.g. `Java`). Validated — see below. |
-| `limit`        | no       | Max repositories to return (default from config).      |
+| `limit`        | no       | Max repositories to return, 1–500 (default 100).       |
 
 Example:
 
@@ -144,15 +144,26 @@ softens the rate limit; surfacing GitHub's own `Retry-After` back to callers as 
 Edge cases identified but deliberately left as-is, to keep scope proportionate to
 the exercise:
 
-- **`limit` ceiling vs. actual cap.** `limit` is validated against a fixed
-  `@Max(100)`, but the effective cap is `github.max-results`. Lower `max-results`
-  below 100 and a caller asking for more is silently truncated. The two bounds
-  should be the same number, and truncation should be surfaced (e.g. a header),
-  not silent.
-- **Pagination stability.** Moot under the default config (single page only). If
-  `github.page-size` were set below `limit`, the client would page through
-  GitHub's best-match ordering, which isn't stable across requests — so results
-  could contain duplicates or gaps. There's no cross-page de-duplication.
+- **`limit` capped at 500, and no graceful retry on rate limits.** GitHub's own
+  search ceiling is 1000, but `limit` is capped at **500** here — the largest that
+  reliably completes in testing. At `page-size: 100`, `limit=1000` needs ten
+  sequential page calls, and that burst trips GitHub's *secondary* rate limit (its
+  anti-abuse guard) **even while the primary quota still has requests left** — so
+  the request fails partway with a `403` → `502`. 500 (five pages) stays clear.
+  The client neither paces its requests nor honours the `Retry-After` header GitHub
+  returns, so it surfaces the `403` rather than backing off and retrying. Handling
+  that gracefully (inter-page pacing + `Retry-After` backoff), plus response caching
+  keyed on the query params and client-facing pagination, are the natural next
+  steps. Within 500, the client scores the full set it fetches, so ranking is over
+  every match GitHub surfaces up to that cap, not just the first page.
+- **Pagination stability.** Moot under the default `limit` (one page). Larger
+  limits use offset-based paging (`page=1,2,…`) over GitHub's best-match ordering,
+  and since the pages are separate requests seconds apart, a shift in that ordering
+  could in principle duplicate a boundary repo or skip one — and the client doesn't
+  de-duplicate across pages. Low risk for a `created:>=` query, where churn lands at
+  the low-relevance tail rather than the page boundaries we read; a guaranteed fix
+  needs cursor pagination, which the REST search API doesn't offer (GraphQL does),
+  so it rides along with the pagination work above.
 - **Future `createdAfter`.** Accepted; yields an empty result. No `@PastOrPresent`
   guard, which seems defensible rather than worth rejecting.
 - **`github.page-size > 100`.** Not validated; GitHub caps `per_page` at 100 and

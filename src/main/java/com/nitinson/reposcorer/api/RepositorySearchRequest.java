@@ -11,5 +11,21 @@ import jakarta.validation.constraints.NotNull;
 public record RepositorySearchRequest(
         @NotNull LocalDate createdAfter,
         @SupportedLanguage String language,
-        @Min(1) @Max(100) Integer limit) {
+        // Capped at 500 — the largest request that reliably completes in testing.
+        // GitHub's own search ceiling is 1000, but fetching that needs ten
+        // sequential page calls, which trips GitHub's secondary rate limit even
+        // while under the primary quota; 500 (five pages) stays clear of it. The
+        // default stays modest since each 100 costs one page call (see below).
+        @Min(1) @Max(500) Integer limit) {
+
+    private static final int DEFAULT_LIMIT = 100;
+
+    public RepositorySearchRequest {
+        // Default before validation runs, so the default is bound by the same
+        // @Min/@Max as an explicit value — the range and its default live here,
+        // in one place, with no second cap elsewhere to drift out of sync.
+        if (limit == null) {
+            limit = DEFAULT_LIMIT;
+        }
+    }
 }

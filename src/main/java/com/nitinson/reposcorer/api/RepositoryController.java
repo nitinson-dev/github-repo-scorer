@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.nitinson.reposcorer.github.GitHubClient;
-import com.nitinson.reposcorer.github.GitHubProperties;
 import com.nitinson.reposcorer.github.GitHubRepository;
 import com.nitinson.reposcorer.scoring.ScoredRepository;
 import com.nitinson.reposcorer.scoring.ScoringService;
@@ -22,20 +21,16 @@ public class RepositoryController {
 
     private final GitHubClient gitHubClient;
     private final ScoringService scoringService;
-    private final GitHubProperties gitHubProperties;
 
-    public RepositoryController(GitHubClient gitHubClient, ScoringService scoringService,
-                                GitHubProperties gitHubProperties) {
+    public RepositoryController(GitHubClient gitHubClient, ScoringService scoringService) {
         this.gitHubClient = gitHubClient;
         this.scoringService = scoringService;
-        this.gitHubProperties = gitHubProperties;
     }
 
     @GetMapping
     public List<ScoredRepository> search(@Valid @ParameterObject RepositorySearchRequest request) {
-        int limit = request.limit() != null ? request.limit() : gitHubProperties.maxResults();
-        List<GitHubRepository> repositories =
-                gitHubClient.searchRepositories(request.createdAfter(), request.language(), limit);
+        List<GitHubRepository> repositories = gitHubClient.searchRepositories(
+                request.createdAfter(), request.language(), request.limit());
         return scoringService.scoreAndRank(repositories, Instant.now());
     }
 }

@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -62,6 +63,18 @@ class RepositoryControllerTest {
     }
 
     @Test
+    void defaultsLimitTo100WhenOmitted() throws Exception {
+        when(scoringService.scoreAndRank(anyList(), any(Instant.class))).thenReturn(List.of());
+
+        mvc.perform(get("/api/repositories")
+                        .param("createdAfter", "2023-01-01")
+                        .param("language", "Java"))
+                .andExpect(status().isOk());
+
+        verify(gitHubClient).searchRepositories(eq(LocalDate.parse("2023-01-01")), eq("Java"), eq(100));
+    }
+
+    @Test
     void rejectsMissingCreatedAfter() throws Exception {
         mvc.perform(get("/api/repositories").param("language", "Java"))
                 .andExpect(status().isBadRequest())
@@ -79,7 +92,7 @@ class RepositoryControllerTest {
     void rejectsLimitAboveMaximum() throws Exception {
         mvc.perform(get("/api/repositories")
                         .param("createdAfter", "2023-01-01")
-                        .param("limit", "101"))
+                        .param("limit", "501"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -126,7 +139,7 @@ class RepositoryControllerTest {
     static class TestProperties {
         @Bean
         GitHubProperties gitHubProperties() {
-            return new GitHubProperties("https://api.github.com", "", 100, 100,
+            return new GitHubProperties("https://api.github.com", "", 100,
                     Duration.ofSeconds(5), Duration.ofSeconds(10), List.of("Java"));
         }
     }

@@ -27,8 +27,6 @@ github:
   token: ${GITHUB_TOKEN:}
   # Per-page size for the search endpoint (GitHub max: 100).
   page-size: 100
-  # Hard cap on repositories fetched across pages (GitHub caps search at 1000).
-  max-results: 100
   # HTTP timeouts.
   connect-timeout: 5s
   read-timeout: 10s

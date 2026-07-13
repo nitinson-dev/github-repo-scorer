@@ -51,12 +51,11 @@ public class GitHubClient {
      * results until {@code limit} repositories are collected or GitHub runs out.
      */
     public List<GitHubRepository> searchRepositories(LocalDate createdAfter, String language, int limit) {
-        int target = Math.min(limit, properties.maxResults());
         String query = buildQuery(createdAfter, language);
 
         List<GitHubRepository> repositories = new ArrayList<>();
         int page = 1;
-        while (repositories.size() < target) {
+        while (repositories.size() < limit) {
             GitHubSearchResponse response = fetchPage(query, page);
             if (response != null && response.incompleteResults()) {
                 // GitHub timed out server-side and returned partial data with a
@@ -75,7 +74,7 @@ public class GitHubClient {
             page++;
         }
 
-        return repositories.size() > target ? new ArrayList<>(repositories.subList(0, target)) : repositories;
+        return repositories.size() > limit ? new ArrayList<>(repositories.subList(0, limit)) : repositories;
     }
 
     private GitHubSearchResponse fetchPage(String query, int page) {

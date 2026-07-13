@@ -141,7 +141,7 @@ class GitHubClientTest {
         server.stubFor(get(urlPathEqualTo("/search/repositories"))
                 .willReturn(okJson("{ \"total_count\": 0, \"items\": [] }").withFixedDelay(300)));
 
-        GitHubProperties shortReadTimeout = new GitHubProperties(server.baseUrl(), "", 100, 100,
+        GitHubProperties shortReadTimeout = new GitHubProperties(server.baseUrl(), "", 100,
                 Duration.ofSeconds(5), Duration.ofMillis(100), List.of("Java"));
 
         assertThatThrownBy(() -> clientWith(shortReadTimeout)
@@ -193,7 +193,7 @@ class GitHubClientTest {
     }
 
     private GitHubProperties properties(String token, int pageSize) {
-        return new GitHubProperties(server.baseUrl(), token, pageSize, 100,
+        return new GitHubProperties(server.baseUrl(), token, pageSize,
                 Duration.ofSeconds(5), Duration.ofSeconds(10), List.of("Java"));
     }
 

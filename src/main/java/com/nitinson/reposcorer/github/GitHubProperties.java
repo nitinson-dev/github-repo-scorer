@@ -10,7 +10,6 @@ public record GitHubProperties(
         String baseUrl,
         String token,
         int pageSize,
-        int maxResults,
         Duration connectTimeout,
         Duration readTimeout,
         List<String> supportedLanguages) {
