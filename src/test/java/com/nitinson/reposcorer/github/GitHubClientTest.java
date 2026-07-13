@@ -136,7 +136,7 @@ class GitHubClientTest {
                 .willReturn(okJson("{ \"total_count\": 0, \"items\": [] }").withFixedDelay(300)));
 
         GitHubProperties shortReadTimeout = new GitHubProperties(server.baseUrl(), "", 100, 100,
-                Duration.ofSeconds(5), Duration.ofMillis(100));
+                Duration.ofSeconds(5), Duration.ofMillis(100), List.of("Java"));
 
         assertThatThrownBy(() -> clientWith(shortReadTimeout)
                 .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
@@ -149,7 +149,7 @@ class GitHubClientTest {
 
     private GitHubProperties properties(String token, int pageSize) {
         return new GitHubProperties(server.baseUrl(), token, pageSize, 100,
-                Duration.ofSeconds(5), Duration.ofSeconds(10));
+                Duration.ofSeconds(5), Duration.ofSeconds(10), List.of("Java"));
     }
 
     private static String pageOf(String firstName, String secondName) {

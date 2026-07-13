@@ -18,6 +18,26 @@ github:
   # HTTP timeouts.
   connect-timeout: 5s
   read-timeout: 10s
+  # Languages the API accepts. GitHub silently ignores an unknown language
+  # qualifier and returns unfiltered results, so we reject anything outside this
+  # set with a 400 rather than pass the quirk on to callers. This is a pragmatic
+  # subset, not GitHub's full Linguist catalog; extend as needed.
+  supported-languages:
+    - Java
+    - Kotlin
+    - Scala
+    - Groovy
+    - Python
+    - JavaScript
+    - TypeScript
+    - Go
+    - Rust
+    - Ruby
+    - PHP
+    - Swift
+    - C
+    - C++
+    - C#
 
 scoring:
   # Weights applied to the normalized factors. Must sum to 1.0.

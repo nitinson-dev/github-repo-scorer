@@ -84,6 +84,18 @@ class RepositoryControllerTest {
     }
 
     @Test
+    void rejectsUnsupportedLanguage() throws Exception {
+        // GitHub would silently ignore an unknown language and return unfiltered
+        // results; we reject it up front instead of passing that quirk through.
+        mvc.perform(get("/api/repositories")
+                        .param("createdAfter", "2023-01-01")
+                        .param("language", "Java222"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.path").value("/api/repositories"));
+    }
+
+    @Test
     void mapsGitHubValidationErrorToUnprocessableEntity() throws Exception {
         when(gitHubClient.searchRepositories(any(), any(), anyInt()))
                 .thenThrow(new GitHubApiException(HttpStatus.UNPROCESSABLE_ENTITY, "rejected query", null));
@@ -115,7 +127,7 @@ class RepositoryControllerTest {
         @Bean
         GitHubProperties gitHubProperties() {
             return new GitHubProperties("https://api.github.com", "", 100, 100,
-                    Duration.ofSeconds(5), Duration.ofSeconds(10));
+                    Duration.ofSeconds(5), Duration.ofSeconds(10), List.of("Java"));
         }
     }
 }

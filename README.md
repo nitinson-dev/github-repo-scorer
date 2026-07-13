@@ -45,7 +45,7 @@ GET /api/repositories?createdAfter=YYYY-MM-DD&language=Java&limit=N
 | Param          | Required | Description                                            |
 |----------------|----------|--------------------------------------------------------|
 | `createdAfter` | yes      | Earliest repository creation date (ISO `YYYY-MM-DD`).  |
-| `language`     | no       | Filter by primary language (e.g. `Java`).              |
+| `language`     | no       | Filter by primary language (e.g. `Java`). Validated — see below. |
 | `limit`        | no       | Max repositories to return (default from config).      |
 
 Example:
@@ -79,6 +79,18 @@ Errors come back with a consistent body (`timestamp`, `status`, `error`,
 | `422`  | GitHub rejected the search query (echoed from GitHub's own `422`). |
 | `502`  | GitHub returned an error (e.g. `503`) or was otherwise unreachable. |
 | `504`  | The GitHub request timed out.                                     |
+
+### Language filtering
+
+GitHub's search API silently ignores an unrecognized `language` qualifier and
+returns results across *all* languages rather than erroring, so a typo like
+`language=Java222` would come back looking filtered when it isn't. To keep that
+upstream quirk from leaking into our contract, the `language` value is validated
+against a configured set (`github.supported-languages` in `application.yml`) and
+an unknown value returns `400`. The list is a pragmatic subset of common
+languages, not GitHub's full Linguist catalog — extending it to the full set is
+a deliberate follow-up, not an oversight. Matching is exact, so `Java` is
+accepted and `java` is not.
 
 ## Scoring
 
