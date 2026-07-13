@@ -20,6 +20,22 @@ mvn spring-boot:run
 
 The service starts on `http://localhost:8080`.
 
+## Run with Docker
+
+A multi-stage build compiles the jar and ships it on a slim JRE image, so you
+don't need Java or Maven installed locally.
+
+```bash
+docker build -t github-repo-scorer .
+docker run -p 8080:8080 github-repo-scorer
+```
+
+To raise the GitHub rate limit, pass a token through:
+
+```bash
+docker run -p 8080:8080 -e GITHUB_TOKEN=your_token github-repo-scorer
+```
+
 ## API
 
 ```
