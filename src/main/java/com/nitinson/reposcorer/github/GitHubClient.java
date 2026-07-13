@@ -4,6 +4,8 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.HttpHeaders;
@@ -18,6 +20,8 @@ import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
 @Component
 public class GitHubClient {
+
+    private static final Logger log = LoggerFactory.getLogger(GitHubClient.class);
 
     private final RestClient restClient;
     private final GitHubProperties properties;
@@ -54,6 +58,12 @@ public class GitHubClient {
         int page = 1;
         while (repositories.size() < target) {
             GitHubSearchResponse response = fetchPage(query, page);
+            if (response != null && response.incompleteResults()) {
+                // GitHub timed out server-side and returned partial data with a
+                // 200; flag it so a truncated result isn't mistaken for complete.
+                log.warn("GitHub reported incomplete search results for query [{}] on page {}; "
+                        + "returned data may be partial", query, page);
+            }
             if (response == null || response.items() == null || response.items().isEmpty()) {
                 break;
             }

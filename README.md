@@ -80,6 +80,10 @@ Errors come back with a consistent body (`timestamp`, `status`, `error`,
 | `502`  | GitHub returned an error (e.g. `503`) or was otherwise unreachable. |
 | `504`  | The GitHub request timed out.                                     |
 
+When GitHub's search backend times out it returns *partial* results with a `200`
+and `"incomplete_results": true`. The client logs a warning in that case so a
+truncated result set isn't silently mistaken for a complete one.
+
 ### Language filtering
 
 GitHub's search API silently ignores an unrecognized `language` qualifier and
@@ -110,8 +114,10 @@ repo last pushed one half-life ago scores 0.5 on the recency factor.
 
 The final score is `100 * (wStars*starsN + wForks*forksN + wRecency*recencyN)`.
 The weights sum to 1 so that, with each normalized factor in `[0, 1]`, the score
-stays bounded within `[0, 100]` regardless of the inputs. Weights, reference
-counts, and the recency half-life all live in `application.yml`.
+stays bounded within `[0, 100]` regardless of the inputs. That invariant is
+enforced: the service refuses to start if `scoring.weights` don't sum to 1.
+Weights, reference counts, and the recency half-life all live in
+`application.yml`.
 
 The score is computed as a `double` and only rounded for display, so repos that
 look tied on the rounded value usually aren't when ranked. Where scores are

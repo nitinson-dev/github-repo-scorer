@@ -18,11 +18,17 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClient;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.nitinson.reposcorer.exception.GitHubApiException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 class GitHubClientTest {
 
@@ -143,8 +149,47 @@ class GitHubClientTest {
                 .isInstanceOf(GitHubUnavailableException.class);
     }
 
+    @Test
+    void warnsWhenGitHubReportsIncompleteResults() {
+        // GitHub sets incomplete_results when its search backend times out and
+        // returns partial data with a 200; we must not present that as complete.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(okJson("""
+                        {
+                          "total_count": 1,
+                          "incomplete_results": true,
+                          "items": [
+                            {
+                              "full_name": "owner/one",
+                              "html_url": "https://github.com/owner/one",
+                              "language": "Java",
+                              "stargazers_count": 10,
+                              "forks_count": 2,
+                              "pushed_at": "2026-07-01T12:00:00Z"
+                            }
+                          ]
+                        }
+                        """)));
+
+        ListAppender<ILoggingEvent> logs = attachAppender(GitHubClient.class);
+
+        clientWith(properties("", 100)).searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10);
+
+        assertThat(logs.list)
+                .anyMatch(event -> event.getLevel() == Level.WARN
+                        && event.getFormattedMessage().contains("incomplete"));
+    }
+
     private GitHubClient clientWith(GitHubProperties properties) {
         return new GitHubClient(RestClient.builder(), properties);
+    }
+
+    private static ListAppender<ILoggingEvent> attachAppender(Class<?> type) {
+        Logger logger = (Logger) LoggerFactory.getLogger(type);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
     }
 
     private GitHubProperties properties(String token, int pageSize) {
