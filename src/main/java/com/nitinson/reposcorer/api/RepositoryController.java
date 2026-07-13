@@ -3,6 +3,7 @@ package com.nitinson.reposcorer.api;
 import java.time.Instant;
 import java.util.List;
 
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,7 +32,7 @@ public class RepositoryController {
     }
 
     @GetMapping
-    public List<ScoredRepository> search(@Valid RepositorySearchRequest request) {
+    public List<ScoredRepository> search(@Valid @ParameterObject RepositorySearchRequest request) {
         int limit = request.limit() != null ? request.limit() : gitHubProperties.maxResults();
         List<GitHubRepository> repositories =
                 gitHubClient.searchRepositories(request.createdAfter(), request.language(), limit);

@@ -13,6 +13,12 @@ management:
         # more surface than a load-balancer probe needs.
         include: health,info
 
+# OpenAPI 3 spec is generated from the controller and validation annotations by
+# springdoc, served at /v3/api-docs; the interactive Swagger UI at /swagger-ui.html.
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
 github:
   # Base URL of the GitHub REST API.
   base-url: https://api.github.com

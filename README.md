@@ -42,6 +42,9 @@ docker run -p 8080:8080 -e GITHUB_TOKEN=your_token github-repo-scorer
 GET /api/repositories?createdAfter=YYYY-MM-DD&language=Java&limit=N
 ```
 
+Interactive docs (Swagger UI) are at `/swagger-ui.html`, and the OpenAPI 3 spec
+at `/v3/api-docs`.
+
 | Param          | Required | Description                                            |
 |----------------|----------|--------------------------------------------------------|
 | `createdAfter` | yes      | Earliest repository creation date (ISO `YYYY-MM-DD`).  |
@@ -87,14 +90,13 @@ truncated result set isn't silently mistaken for a complete one.
 ### Language filtering
 
 GitHub's search API silently ignores an unrecognized `language` qualifier and
-returns results across *all* languages rather than erroring, so a typo like
-`language=Java222` would come back looking filtered when it isn't. To keep that
-upstream quirk from leaking into our contract, the `language` value is validated
-against a configured set (`github.supported-languages` in `application.yml`) and
-an unknown value returns `400`. The list is a pragmatic subset of common
-languages, not GitHub's full Linguist catalog — extending it to the full set is
-a deliberate follow-up, not an oversight. Matching is exact, so `Java` is
-accepted and `java` is not.
+returns results across *all* languages instead of erroring — so a typo like
+`language=Java222` looks filtered when it isn't. To keep that quirk out of our
+contract, `language` is validated against a configured set
+(`github.supported-languages` in `application.yml`); an unknown value returns
+`400`. The set is a pragmatic subset of common languages, not GitHub's full
+Linguist catalog — extending it is a deliberate follow-up. Matching is exact:
+`Java` is accepted, `java` is not.
 
 ## Scoring
 
@@ -102,22 +104,20 @@ Each repository receives a weighted popularity score on a scale of 0–100.
 
 Stars and forks use logarithmic normalization, `log1p(v) / log1p(reference)`,
 where `reference` is roughly the largest star/fork count on GitHub today. The log
-gives diminishing returns so a handful of mega-repos don't dominate, and because
-it's an absolute curve rather than a batch-relative one, a repo's score doesn't
-change depending on what else came back in the same search. There's no hard
-plateau: a repo near the reference lands close to 1.0 without every large repo
-collapsing onto the same value. The factor is clamped at 1 for the rare repo that
-exceeds the reference.
+gives diminishing returns so a handful of mega-repos don't dominate. The curve is
+absolute, not batch-relative, so a repo's score doesn't depend on what else came
+back in the same search. There's no hard plateau — a repo near the reference
+approaches 1.0 without large repos collapsing onto one value — and the factor is
+clamped at 1 above the reference.
 
 Recency is a half-life decay on `pushed_at`: `0.5 ^ (ageDays / halfLife)`, so a
 repo last pushed one half-life ago scores 0.5 on the recency factor.
 
 The final score is `100 * (wStars*starsN + wForks*forksN + wRecency*recencyN)`.
-The weights sum to 1 so that, with each normalized factor in `[0, 1]`, the score
-stays bounded within `[0, 100]` regardless of the inputs. That invariant is
-enforced: the service refuses to start if `scoring.weights` don't sum to 1.
-Weights, reference counts, and the recency half-life all live in
-`application.yml`.
+The weights sum to 1 so that, with each factor in `[0, 1]`, the score stays
+within `[0, 100]`. That invariant is enforced — the service refuses to start if
+`scoring.weights` don't sum to 1. Weights, reference counts, and the half-life
+all live in `application.yml`.
 
 The score is computed as a `double` and only rounded for display, so repos that
 look tied on the rounded value usually aren't when ranked. Where scores are
@@ -125,38 +125,35 @@ genuinely equal, ranking falls back to stars, then forks, then most recent push
 for a stable ordering.
 
 The weights and normalization parameters are hand-picked heuristics, not learned
-from data — they aim for rankings that are intuitive and easy to tune. A
-production system would calibrate them against real usage or feedback, or move to
-a learned ranking model (learning-to-rank) if the extra machinery earned its keep.
+from data — chosen for rankings that are intuitive and easy to tune. A production
+system would calibrate them against real usage, or move to a learned ranking
+model if the extra machinery earned its keep.
 
 ## Scaling considerations
 
 The service holds no server-side state, so it scales out horizontally behind a
-load balancer, which probes `GET /actuator/health` (exposed via Spring Boot
-Actuator) to route only to healthy instances. GitHub is the bottleneck rather
-than the app itself: search is
-capped at 30 req/min with a token (10 without), so for heavier traffic the
-obvious next step is caching responses (e.g. Caffeine) keyed on the query
-params. Caching would also soften GitHub's rate limit; surfacing GitHub's own
-rate-limit signal (`Retry-After`) back to callers as a `429` would be the follow-up.
+load balancer, which probes `GET /actuator/health` (via Spring Boot Actuator) to
+route only to healthy instances. GitHub, not the app, is the bottleneck: search
+is capped at 30 req/min with a token (10 without). For heavier traffic the next
+step is caching responses (e.g. Caffeine) keyed on the query params, which also
+softens the rate limit; surfacing GitHub's own `Retry-After` back to callers as a
+`429` would follow.
 
 ## Known trade-offs
 
-Edge cases I identified but deliberately left as-is, to keep the scope
-proportionate to the exercise:
+Edge cases identified but deliberately left as-is, to keep scope proportionate to
+the exercise:
 
-- **`limit` validation ceiling vs. actual cap.** `limit` is validated against a
-  fixed `@Max(100)`, while the effective cap is `github.max-results`. If
-  `max-results` is lowered below 100, a caller asking for more is silently
-  truncated with no signal. These two bounds should be the same number, and
-  truncation should probably be surfaced (e.g. a header) rather than silent.
-- **Pagination stability.** With the default config the client only ever fetches
-  a single page, so this is currently moot. If `github.page-size` were set below
-  `limit`, the client would page through GitHub's best-match ordering, which
-  isn't guaranteed stable across requests — so results could contain duplicates
-  or gaps. There's no cross-page de-duplication.
-- **Future / far-past `createdAfter`.** A future date is accepted and simply
-  yields an empty result; there's no `@PastOrPresent` guard. This seems
-  defensible rather than worth rejecting.
+- **`limit` ceiling vs. actual cap.** `limit` is validated against a fixed
+  `@Max(100)`, but the effective cap is `github.max-results`. Lower `max-results`
+  below 100 and a caller asking for more is silently truncated. The two bounds
+  should be the same number, and truncation should be surfaced (e.g. a header),
+  not silent.
+- **Pagination stability.** Moot under the default config (single page only). If
+  `github.page-size` were set below `limit`, the client would page through
+  GitHub's best-match ordering, which isn't stable across requests — so results
+  could contain duplicates or gaps. There's no cross-page de-duplication.
+- **Future `createdAfter`.** Accepted; yields an empty result. No `@PastOrPresent`
+  guard, which seems defensible rather than worth rejecting.
 - **`github.page-size > 100`.** Not validated; GitHub caps `per_page` at 100 and
-  would reject a larger value at runtime with a `422`.
+  rejects a larger value at runtime with `422`.
