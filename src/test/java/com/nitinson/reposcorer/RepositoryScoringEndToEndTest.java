@@ -83,4 +83,12 @@ class RepositoryScoringEndToEndTest {
         github.verify(getRequestedFor(urlPathEqualTo("/search/repositories"))
                 .withQueryParam("q", equalTo("created:>=2015-01-01 language:Java")));
     }
+
+    @Test
+    void exposesHealthEndpointForLoadBalancerProbes() {
+        ResponseEntity<String> response = rest.getForEntity("/actuator/health", String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"status\":\"UP\"");
+    }
 }

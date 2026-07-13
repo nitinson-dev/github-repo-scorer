@@ -5,6 +5,14 @@ spring:
 server:
   port: 8080
 
+management:
+  endpoints:
+    web:
+      exposure:
+        # Only health and info; everything else stays off so we don't expose
+        # more surface than a load-balancer probe needs.
+        include: health,info
+
 github:
   # Base URL of the GitHub REST API.
   base-url: https://api.github.com

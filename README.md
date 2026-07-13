@@ -132,7 +132,9 @@ a learned ranking model (learning-to-rank) if the extra machinery earned its kee
 ## Scaling considerations
 
 The service holds no server-side state, so it scales out horizontally behind a
-load balancer. GitHub is the bottleneck rather than the app itself: search is
+load balancer, which probes `GET /actuator/health` (exposed via Spring Boot
+Actuator) to route only to healthy instances. GitHub is the bottleneck rather
+than the app itself: search is
 capped at 30 req/min with a token (10 without), so for heavier traffic the
 obvious next step is caching responses (e.g. Caffeine) keyed on the query
 params. Caching would also soften GitHub's rate limit; surfacing GitHub's own
