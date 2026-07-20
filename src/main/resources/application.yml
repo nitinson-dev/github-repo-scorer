@@ -30,6 +30,14 @@ github:
   # HTTP timeouts.
   connect-timeout: 5s
   read-timeout: 10s
+  # Resilience for calls to GitHub. Retries cover transient failures only (5xx
+  # and timeouts); rate limits and 4xx are never retried.
+  resilience:
+    # Total attempts per page fetch, including the first (1 disables retrying).
+    max-attempts: 3
+    # Wait before the first retry, growing by backoff-multiplier each attempt.
+    initial-backoff: 500ms
+    backoff-multiplier: 2.0
   # Languages the API accepts. GitHub silently ignores an unknown language
   # qualifier and returns unfiltered results, so we reject anything outside this
   # set with a 400 rather than pass the quirk on to callers. This is a pragmatic

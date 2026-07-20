@@ -23,6 +23,10 @@ import com.nitinson.reposcorer.exception.GitHubApiException;
 import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
+import io.github.resilience4j.core.IntervalFunction;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
+
 @Component
 public class GitHubClient {
 
@@ -30,8 +34,9 @@ public class GitHubClient {
 
     private final RestClient restClient;
     private final GitHubProperties properties;
+    private final Retry retry;
 
-    public GitHubClient(RestClient.Builder builder, GitHubProperties properties) {
+    public GitHubClient(RestClient.Builder builder, GitHubProperties properties, ResilienceProperties resilience) {
         this.properties = properties;
 
         ClientHttpRequestFactorySettings timeouts = ClientHttpRequestFactorySettings.defaults()
@@ -49,6 +54,29 @@ public class GitHubClient {
         }
 
         this.restClient = configured.build();
+        this.retry = buildRetry(resilience);
+    }
+
+    private static Retry buildRetry(ResilienceProperties resilience) {
+        RetryConfig config = RetryConfig.custom()
+                .maxAttempts(resilience.maxAttempts())
+                .intervalFunction(IntervalFunction.ofExponentialRandomBackoff(
+                        resilience.initialBackoff(), resilience.backoffMultiplier()))
+                .retryOnException(GitHubClient::isRetryable)
+                .build();
+        return Retry.of("github-search", config);
+    }
+
+    /**
+     * Only transient failures are worth retrying: connection/read failures and
+     * upstream 5xx. A 4xx is a permanent rejection, and a rate limit is handled by
+     * failing fast with Retry-After rather than blocking inside the request.
+     */
+    private static boolean isRetryable(Throwable t) {
+        if (t instanceof GitHubUnavailableException) {
+            return true;
+        }
+        return t instanceof GitHubApiException api && api.status().is5xxServerError();
     }
 
     /**
@@ -83,6 +111,10 @@ public class GitHubClient {
     }
 
     private GitHubSearchResponse fetchPage(String query, int page) {
+        return retry.executeSupplier(() -> fetchPageOnce(query, page));
+    }
+
+    private GitHubSearchResponse fetchPageOnce(String query, int page) {
         try {
             return restClient.get()
                     .uri(uriBuilder -> uriBuilder

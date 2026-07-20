@@ -7,6 +7,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
+import static com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -151,6 +152,51 @@ class GitHubClientTest {
     }
 
     @Test
+    void retriesTransientFailureThenSucceeds() {
+        // First attempt fails with a 503, the second returns data: the retry turns
+        // a transient upstream blip into a successful call.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .inScenario("retry").whenScenarioStateIs(STARTED)
+                .willReturn(aResponse().withStatus(503))
+                .willSetStateTo("recovered"));
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .inScenario("retry").whenScenarioStateIs("recovered")
+                .willReturn(okJson("{ \"total_count\": 0, \"items\": [] }")));
+
+        List<GitHubRepository> repositories = clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10);
+
+        assertThat(repositories).isEmpty();
+        server.verify(2, getRequestedFor(urlPathEqualTo("/search/repositories")));
+    }
+
+    @Test
+    void doesNotRetryClientErrors() {
+        // A 4xx is a permanent rejection of our request; retrying it only wastes
+        // quota, so it must be attempted exactly once.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(422).withBody("{\"message\":\"Validation Failed\"}")));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOf(GitHubApiException.class);
+        server.verify(1, getRequestedFor(urlPathEqualTo("/search/repositories")));
+    }
+
+    @Test
+    void doesNotRetryRateLimits() {
+        // A rate-limit window is measured in minutes; retrying inside one request
+        // would just block the caller, so we fail fast and let them back off.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "60")));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOf(GitHubRateLimitException.class);
+        server.verify(1, getRequestedFor(urlPathEqualTo("/search/repositories")));
+    }
+
+    @Test
     void translatesTooManyRequestsToRateLimitException() {
         server.stubFor(get(urlPathEqualTo("/search/repositories"))
                 .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "42")));
@@ -228,8 +274,13 @@ class GitHubClientTest {
                         && event.getFormattedMessage().contains("incomplete"));
     }
 
+    // Fast retry with negligible backoff so failure-path tests exercise the retry
+    // behaviour without slowing the suite down.
+    private static final ResilienceProperties RESILIENCE =
+            new ResilienceProperties(3, Duration.ofMillis(1), 1.0);
+
     private GitHubClient clientWith(GitHubProperties properties) {
-        return new GitHubClient(RestClient.builder(), properties);
+        return new GitHubClient(RestClient.builder(), properties, RESILIENCE);
     }
 
     private static ListAppender<ILoggingEvent> attachAppender(Class<?> type) {
