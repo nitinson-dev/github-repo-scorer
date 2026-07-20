@@ -80,12 +80,35 @@ Errors come back with a consistent body (`timestamp`, `status`, `error`,
 |--------|-------------------------------------------------------------------|
 | `400`  | The request is invalid (missing/malformed `createdAfter`, `limit` out of range). |
 | `422`  | GitHub rejected the search query (echoed from GitHub's own `422`). |
-| `502`  | GitHub returned an error (e.g. `503`) or was otherwise unreachable. |
+| `502`  | GitHub returned an unexpected error, or a `200` with an unreadable body. |
+| `503`  | GitHub's rate limit is exhausted, or the circuit breaker is open. The response carries a `Retry-After` telling you when to try again. |
 | `504`  | The GitHub request timed out.                                     |
 
-When GitHub's search backend times out it returns *partial* results with a `200`
-and `"incomplete_results": true`. The client logs a warning in that case so a
-truncated result set isn't silently mistaken for a complete one.
+### Resilience
+
+Calls to GitHub are wrapped in retry and circuit-breaker policies (resilience4j,
+configured under `github.resilience`):
+
+- **Retry.** Transient failures — upstream `5xx` and timeouts — are retried with
+  exponential backoff and jitter. A `4xx` (a permanent rejection) and a rate limit
+  are *not* retried.
+- **Circuit breaker.** Once the recent failure rate crosses a threshold, the
+  service stops calling GitHub for a cool-off window and fails fast with `503`,
+  rather than piling requests onto a struggling upstream. Only transient failures
+  count toward the rate — a `4xx` or a rate limit says nothing about GitHub being
+  down.
+- **Rate limits.** GitHub signals these with a `429`, or a `403` with
+  `X-RateLimit-Remaining: 0`; both are surfaced as `503` with GitHub's advised wait
+  passed through as `Retry-After`.
+
+### Partial results
+
+When GitHub's search backend times out it returns *partial* data with a `200` and
+`"incomplete_results": true`; likewise, when paging for a larger `limit`, a later
+page can fail after earlier ones have succeeded. In both cases the service returns
+what it did collect and sets an `X-Incomplete-Results: true` response header, so a
+truncated result set is distinguishable from a genuinely small one. (A failure on
+the *first* page, with nothing collected, surfaces as an error instead.)
 
 ### Language filtering
 
@@ -95,8 +118,9 @@ returns results across *all* languages instead of erroring — so a typo like
 contract, `language` is validated against a configured set
 (`github.supported-languages` in `application.yml`); an unknown value returns
 `400`. The set is a pragmatic subset of common languages, not GitHub's full
-Linguist catalog — extending it is a deliberate follow-up. Matching is exact:
-`Java` is accepted, `java` is not.
+Linguist catalog — extending it is a deliberate follow-up. Matching is
+case-insensitive, mirroring GitHub's own behaviour: `Java` and `java` are both
+accepted.
 
 ## Scoring
 
@@ -136,26 +160,26 @@ load balancer, which probes `GET /actuator/health` (via Spring Boot Actuator) to
 route only to healthy instances. GitHub, not the app, is the bottleneck: search
 is capped at 30 req/min with a token (10 without). For heavier traffic the next
 step is caching responses (e.g. Caffeine) keyed on the query params, which also
-softens the rate limit; surfacing GitHub's own `Retry-After` back to callers as a
-`429` would follow.
+softens the rate limit. (GitHub's own `Retry-After` is already surfaced to callers
+on a `503` — see [Resilience](#resilience) above.)
 
 ## Known trade-offs
 
 Edge cases identified but deliberately left as-is, to keep scope proportionate to
 the exercise:
 
-- **`limit` capped at 500, and no graceful retry on rate limits.** GitHub's own
-  search ceiling is 1000, but `limit` is capped at **500** here — the largest that
-  reliably completes in testing. At `page-size: 100`, `limit=1000` needs ten
-  sequential page calls, and that burst trips GitHub's *secondary* rate limit (its
-  anti-abuse guard) **even while the primary quota still has requests left** — so
-  the request fails partway with a `403` → `502`. 500 (five pages) stays clear.
-  The client neither paces its requests nor honours the `Retry-After` header GitHub
-  returns, so it surfaces the `403` rather than backing off and retrying. Handling
-  that gracefully (inter-page pacing + `Retry-After` backoff), plus response caching
-  keyed on the query params and client-facing pagination, are the natural next
-  steps. Within 500, the client scores the full set it fetches, so ranking is over
-  every match GitHub surfaces up to that cap, not just the first page.
+- **`limit` capped at 500, no inter-page pacing.** GitHub's own search ceiling is
+  1000, but `limit` is capped at **500** here — the largest that reliably completes
+  in testing. At `page-size: 100`, `limit=1000` needs ten sequential page calls, and
+  that burst trips GitHub's *secondary* rate limit (its anti-abuse guard) **even
+  while the primary quota still has requests left**. 500 (five pages) stays clear.
+  Transient failures are now retried with backoff, and rate limits are surfaced as
+  `503` + `Retry-After` (see [Resilience](#resilience)), but the client does not yet
+  *pace* its inter-page calls to avoid provoking the secondary limit in the first
+  place; request pacing, response caching keyed on the query params, and
+  client-facing pagination are the natural next steps. Within 500, the client scores
+  the full set it fetches, so ranking is over every match GitHub surfaces up to that
+  cap, not just the first page.
 - **Pagination stability.** Moot under the default `limit` (one page). Larger
   limits use offset-based paging (`page=1,2,…`) over GitHub's best-match ordering,
   and since the pages are separate requests seconds apart, a shift in that ordering
@@ -164,7 +188,5 @@ the exercise:
   the low-relevance tail rather than the page boundaries we read; a guaranteed fix
   needs cursor pagination, which the REST search API doesn't offer (GraphQL does),
   so it rides along with the pagination work above.
-- **Future `createdAfter`.** Accepted; yields an empty result. No `@PastOrPresent`
-  guard, which seems defensible rather than worth rejecting.
 - **`github.page-size > 100`.** Not validated; GitHub caps `per_page` at 100 and
   rejects a larger value at runtime with `422`.
