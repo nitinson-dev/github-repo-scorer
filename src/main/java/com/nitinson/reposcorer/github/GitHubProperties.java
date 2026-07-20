@@ -19,6 +19,9 @@ public record GitHubProperties(
     }
 
     public boolean isSupportedLanguage(String language) {
-        return supportedLanguages != null && supportedLanguages.contains(language);
+        // GitHub matches the language qualifier case-insensitively, so we do too;
+        // a case-only difference isn't a reason to reject an otherwise valid filter.
+        return supportedLanguages != null
+                && supportedLanguages.stream().anyMatch(supported -> supported.equalsIgnoreCase(language));
     }
 }

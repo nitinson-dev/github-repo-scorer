@@ -9,10 +9,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import com.nitinson.reposcorer.exception.GitHubApiException;
@@ -94,6 +96,11 @@ public class GitHubClient {
                     "GitHub search returned " + e.getStatusCode().value(), e);
         } catch (ResourceAccessException e) {
             throw new GitHubUnavailableException("GitHub search could not be completed", e);
+        } catch (RestClientException e) {
+            // A 2xx whose body we cannot deserialize (malformed or unexpected
+            // payload) is an upstream contract failure, not our bug: report it as a
+            // bad gateway instead of letting it fall through to a generic 500.
+            throw new GitHubApiException(HttpStatus.BAD_GATEWAY, "GitHub returned an unreadable response", e);
         }
     }
 

@@ -109,6 +109,29 @@ class RepositoryControllerTest {
     }
 
     @Test
+    void rejectsFutureCreatedAfter() throws Exception {
+        // A future creation date can only ever match zero repositories; reject it
+        // up front rather than making a pointless upstream call.
+        mvc.perform(get("/api/repositories")
+                        .param("createdAfter", "2999-01-01")
+                        .param("language", "Java"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+    }
+
+    @Test
+    void acceptsLanguageRegardlessOfCase() throws Exception {
+        // GitHub matches the language qualifier case-insensitively, so "java" is a
+        // valid filter; rejecting it would be an inconsistency we impose ourselves.
+        when(scoringService.scoreAndRank(anyList(), any(Instant.class))).thenReturn(List.of());
+
+        mvc.perform(get("/api/repositories")
+                        .param("createdAfter", "2023-01-01")
+                        .param("language", "java"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void mapsGitHubValidationErrorToUnprocessableEntity() throws Exception {
         when(gitHubClient.searchRepositories(any(), any(), anyInt()))
                 .thenThrow(new GitHubApiException(HttpStatus.UNPROCESSABLE_ENTITY, "rejected query", null));

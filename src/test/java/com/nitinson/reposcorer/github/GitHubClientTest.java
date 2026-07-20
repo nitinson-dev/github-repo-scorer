@@ -150,6 +150,19 @@ class GitHubClientTest {
     }
 
     @Test
+    void mapsUnreadableBodyToBadGateway() {
+        // A 200 whose body we cannot parse is upstream's fault, not ours: it must
+        // surface as a bad gateway, never fall through to a generic 500.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(okJson("{ this is not valid json")));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOfSatisfying(GitHubApiException.class,
+                        e -> assertThat(e.status().value()).isEqualTo(502));
+    }
+
+    @Test
     void warnsWhenGitHubReportsIncompleteResults() {
         // GitHub sets incomplete_results when its search backend times out and
         // returns partial data with a 200; we must not present that as complete.

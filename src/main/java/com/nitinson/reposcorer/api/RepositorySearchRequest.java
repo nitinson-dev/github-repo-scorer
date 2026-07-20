@@ -7,9 +7,12 @@ import com.nitinson.reposcorer.api.validation.SupportedLanguage;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PastOrPresent;
 
 public record RepositorySearchRequest(
-        @NotNull LocalDate createdAfter,
+        // A future date matches nothing on GitHub, so reject it rather than making
+        // a guaranteed-empty upstream call.
+        @NotNull @PastOrPresent LocalDate createdAfter,
         @SupportedLanguage String language,
         // Capped at 500 — the largest request that reliably completes in testing.
         // GitHub's own search ceiling is 1000, but fetching that needs ten
