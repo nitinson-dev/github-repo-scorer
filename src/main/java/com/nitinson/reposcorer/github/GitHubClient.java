@@ -106,18 +106,35 @@ public class GitHubClient {
      * Fetches repositories matching the given filters, paging through the search
      * results until {@code limit} repositories are collected or GitHub runs out.
      */
-    public List<GitHubRepository> searchRepositories(LocalDate createdAfter, String language, int limit) {
+    public GitHubSearchResult searchRepositories(LocalDate createdAfter, String language, int limit) {
         String query = buildQuery(createdAfter, language);
 
         List<GitHubRepository> repositories = new ArrayList<>();
+        boolean incomplete = false;
         int page = 1;
         while (repositories.size() < limit) {
-            GitHubSearchResponse response = fetchPage(query, page);
+            GitHubSearchResponse response;
+            try {
+                response = fetchPage(query, page);
+            } catch (RuntimeException e) {
+                if (repositories.isEmpty()) {
+                    // Nothing collected yet: this is a real failure, not a partial
+                    // result, so let it propagate to the proper error mapping.
+                    throw e;
+                }
+                // We already have earlier pages; return them flagged incomplete
+                // rather than discarding good data because a later page failed.
+                log.warn("GitHub page {} for query [{}] failed after {} repositories; returning partial results",
+                        page, query, repositories.size(), e);
+                incomplete = true;
+                break;
+            }
             if (response != null && response.incompleteResults()) {
                 // GitHub timed out server-side and returned partial data with a
                 // 200; flag it so a truncated result isn't mistaken for complete.
                 log.warn("GitHub reported incomplete search results for query [{}] on page {}; "
                         + "returned data may be partial", query, page);
+                incomplete = true;
             }
             if (response == null || response.items() == null || response.items().isEmpty()) {
                 break;
@@ -130,7 +147,10 @@ public class GitHubClient {
             page++;
         }
 
-        return repositories.size() > limit ? new ArrayList<>(repositories.subList(0, limit)) : repositories;
+        List<GitHubRepository> collected = repositories.size() > limit
+                ? new ArrayList<>(repositories.subList(0, limit))
+                : repositories;
+        return new GitHubSearchResult(collected, incomplete);
     }
 
     private GitHubSearchResponse fetchPage(String query, int page) {

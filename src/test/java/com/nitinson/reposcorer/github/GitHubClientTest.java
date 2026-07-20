@@ -76,7 +76,8 @@ class GitHubClientTest {
                         """)));
 
         GitHubClient client = clientWith(properties("secret-token", 100));
-        List<GitHubRepository> repositories = client.searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10);
+        List<GitHubRepository> repositories =
+                client.searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10).repositories();
 
         assertThat(repositories).hasSize(2);
         assertThat(repositories.getFirst())
@@ -111,7 +112,8 @@ class GitHubClientTest {
                 .willReturn(okJson(pageOf("b/1", "b/2"))));
 
         GitHubClient client = clientWith(properties("", 2));
-        List<GitHubRepository> repositories = client.searchRepositories(LocalDate.parse("2023-01-01"), null, 3);
+        List<GitHubRepository> repositories =
+                client.searchRepositories(LocalDate.parse("2023-01-01"), null, 3).repositories();
 
         assertThat(repositories).extracting(GitHubRepository::fullName)
                 .containsExactly("a/1", "a/2", "b/1");
@@ -153,6 +155,36 @@ class GitHubClientTest {
     }
 
     @Test
+    void returnsPartialResultsWhenALaterPageFails() {
+        // Page one succeeds, page two fails: we keep the repositories we already
+        // have rather than discarding them, and flag the result incomplete.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .withQueryParam("page", equalTo("1"))
+                .willReturn(okJson(pageOf("a/1", "a/2"))));
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .withQueryParam("page", equalTo("2"))
+                .willReturn(aResponse().withStatus(503)));
+
+        GitHubSearchResult result = clientWith(properties("", 2))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 4);
+
+        assertThat(result.repositories()).extracting(GitHubRepository::fullName).containsExactly("a/1", "a/2");
+        assertThat(result.incomplete()).isTrue();
+    }
+
+    @Test
+    void throwsWhenTheVeryFirstPageFails() {
+        // Nothing collected yet, so a failure is a real failure, not a partial:
+        // surface it rather than returning an empty "complete" result.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(503)));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOf(GitHubApiException.class);
+    }
+
+    @Test
     void opensCircuitAfterRepeatedFailures() {
         server.stubFor(get(urlPathEqualTo("/search/repositories"))
                 .willReturn(aResponse().withStatus(503)));
@@ -185,7 +217,7 @@ class GitHubClientTest {
                 .willReturn(okJson("{ \"total_count\": 0, \"items\": [] }")));
 
         List<GitHubRepository> repositories = clientWith(properties("", 100))
-                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10);
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10).repositories();
 
         assertThat(repositories).isEmpty();
         server.verify(2, getRequestedFor(urlPathEqualTo("/search/repositories")));
@@ -288,8 +320,10 @@ class GitHubClientTest {
 
         ListAppender<ILoggingEvent> logs = attachAppender(GitHubClient.class);
 
-        clientWith(properties("", 100)).searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10);
+        GitHubSearchResult result = clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10);
 
+        assertThat(result.incomplete()).isTrue();
         assertThat(logs.list)
                 .anyMatch(event -> event.getLevel() == Level.WARN
                         && event.getFormattedMessage().contains("incomplete"));

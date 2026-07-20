@@ -32,6 +32,7 @@ import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 import com.nitinson.reposcorer.github.GitHubClient;
 import com.nitinson.reposcorer.github.GitHubProperties;
+import com.nitinson.reposcorer.github.GitHubSearchResult;
 import com.nitinson.reposcorer.scoring.ScoredRepository;
 import com.nitinson.reposcorer.scoring.ScoringService;
 
@@ -51,7 +52,7 @@ class RepositoryControllerTest {
     @Test
     void returnsRankedRepositories() throws Exception {
         when(gitHubClient.searchRepositories(eq(LocalDate.parse("2023-01-01")), eq("Java"), anyInt()))
-                .thenReturn(List.of());
+                .thenReturn(new GitHubSearchResult(List.of(), false));
         when(scoringService.scoreAndRank(anyList(), any(Instant.class)))
                 .thenReturn(List.of(new ScoredRepository("owner/one", "https://github.com/owner/one",
                         "Java", 1200, 340, Instant.parse("2026-07-01T12:00:00Z"), 91.4)));
@@ -61,12 +62,28 @@ class RepositoryControllerTest {
                         .param("language", "Java")
                         .param("limit", "20"))
                 .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("X-Incomplete-Results"))
                 .andExpect(jsonPath("$[0].fullName").value("owner/one"))
                 .andExpect(jsonPath("$[0].score").value(91.4));
     }
 
     @Test
+    void flagsIncompleteResultsWithHeader() throws Exception {
+        // When the fetch was truncated, the caller must be able to tell partial
+        // data apart from a genuinely small result set.
+        when(gitHubClient.searchRepositories(any(), any(), anyInt()))
+                .thenReturn(new GitHubSearchResult(List.of(), true));
+        when(scoringService.scoreAndRank(anyList(), any(Instant.class))).thenReturn(List.of());
+
+        mvc.perform(get("/api/repositories").param("createdAfter", "2023-01-01"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Incomplete-Results", "true"));
+    }
+
+    @Test
     void defaultsLimitTo100WhenOmitted() throws Exception {
+        when(gitHubClient.searchRepositories(any(), any(), anyInt()))
+                .thenReturn(new GitHubSearchResult(List.of(), false));
         when(scoringService.scoreAndRank(anyList(), any(Instant.class))).thenReturn(List.of());
 
         mvc.perform(get("/api/repositories")
@@ -126,6 +143,8 @@ class RepositoryControllerTest {
     void acceptsLanguageRegardlessOfCase() throws Exception {
         // GitHub matches the language qualifier case-insensitively, so "java" is a
         // valid filter; rejecting it would be an inconsistency we impose ourselves.
+        when(gitHubClient.searchRepositories(any(), any(), anyInt()))
+                .thenReturn(new GitHubSearchResult(List.of(), false));
         when(scoringService.scoreAndRank(anyList(), any(Instant.class))).thenReturn(List.of());
 
         mvc.perform(get("/api/repositories")
