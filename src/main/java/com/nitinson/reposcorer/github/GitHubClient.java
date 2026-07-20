@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,9 +21,13 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubCircuitOpenException;
 import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.core.IntervalFunction;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
@@ -35,6 +40,8 @@ public class GitHubClient {
     private final RestClient restClient;
     private final GitHubProperties properties;
     private final Retry retry;
+    private final CircuitBreaker circuitBreaker;
+    private final Duration openStateWait;
 
     public GitHubClient(RestClient.Builder builder, GitHubProperties properties, ResilienceProperties resilience) {
         this.properties = properties;
@@ -55,6 +62,8 @@ public class GitHubClient {
 
         this.restClient = configured.build();
         this.retry = buildRetry(resilience);
+        this.circuitBreaker = buildCircuitBreaker(resilience);
+        this.openStateWait = resilience.waitInOpenState();
     }
 
     private static Retry buildRetry(ResilienceProperties resilience) {
@@ -65,6 +74,20 @@ public class GitHubClient {
                 .retryOnException(GitHubClient::isRetryable)
                 .build();
         return Retry.of("github-search", config);
+    }
+
+    private static CircuitBreaker buildCircuitBreaker(ResilienceProperties resilience) {
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                .slidingWindowSize(resilience.slidingWindowSize())
+                .minimumNumberOfCalls(resilience.minimumNumberOfCalls())
+                .failureRateThreshold(resilience.failureRateThreshold())
+                .waitDurationInOpenState(resilience.waitInOpenState())
+                // Only transient availability failures should trip the circuit; a
+                // 4xx or a rate limit says nothing about whether GitHub is down.
+                .recordException(GitHubClient::isRetryable)
+                .build();
+        return CircuitBreaker.of("github-search", config);
     }
 
     /**
@@ -111,7 +134,15 @@ public class GitHubClient {
     }
 
     private GitHubSearchResponse fetchPage(String query, int page) {
-        return retry.executeSupplier(() -> fetchPageOnce(query, page));
+        // Circuit breaker wraps retry: it records one outcome per fetch (after
+        // retries) and, once open, short-circuits before any attempt is made.
+        Supplier<GitHubSearchResponse> guarded = CircuitBreaker.decorateSupplier(circuitBreaker,
+                Retry.decorateSupplier(retry, () -> fetchPageOnce(query, page)));
+        try {
+            return guarded.get();
+        } catch (CallNotPermittedException e) {
+            throw new GitHubCircuitOpenException(openStateWait, "GitHub circuit is open", e);
+        }
     }
 
     private GitHubSearchResponse fetchPageOnce(String query, int page) {

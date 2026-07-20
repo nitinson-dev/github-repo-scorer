@@ -27,6 +27,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubCircuitOpenException;
 import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 import com.nitinson.reposcorer.github.GitHubClient;
@@ -159,6 +160,16 @@ class RepositoryControllerTest {
         mvc.perform(get("/api/repositories").param("createdAfter", "2023-01-01"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(header().string("Retry-After", "30"));
+    }
+
+    @Test
+    void mapsOpenCircuitToServiceUnavailableWithRetryAfter() throws Exception {
+        when(gitHubClient.searchRepositories(any(), any(), anyInt()))
+                .thenThrow(new GitHubCircuitOpenException(Duration.ofSeconds(20), "circuit open", null));
+
+        mvc.perform(get("/api/repositories").param("createdAfter", "2023-01-01"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "20"));
     }
 
     @Test

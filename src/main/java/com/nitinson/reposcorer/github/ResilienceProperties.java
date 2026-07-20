@@ -15,5 +15,14 @@ public record ResilienceProperties(
         int maxAttempts,
         // Wait before the first retry; grows by backoffMultiplier each attempt.
         Duration initialBackoff,
-        double backoffMultiplier) {
+        double backoffMultiplier,
+        // Percentage of failures in the window that trips the circuit open.
+        float failureRateThreshold,
+        // Number of recent calls the failure rate is computed over.
+        int slidingWindowSize,
+        // Minimum calls before the failure rate is evaluated at all.
+        int minimumNumberOfCalls,
+        // How long the circuit stays open before probing GitHub again; also the
+        // Retry-After we advise callers while it's open.
+        Duration waitInOpenState) {
 }

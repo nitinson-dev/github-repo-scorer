@@ -24,6 +24,7 @@ import org.springframework.web.client.RestClient;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubCircuitOpenException;
 import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
@@ -152,6 +153,26 @@ class GitHubClientTest {
     }
 
     @Test
+    void opensCircuitAfterRepeatedFailures() {
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(503)));
+
+        GitHubClient client = clientWith(properties("", 100));
+        for (int i = 0; i < 2; i++) {
+            assertThatThrownBy(() -> client.searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                    .isInstanceOf(GitHubApiException.class);
+        }
+
+        // The sliding window is now full of failures, so the circuit is open: the
+        // next call fails fast without touching GitHub at all.
+        assertThatThrownBy(() -> client.searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOf(GitHubCircuitOpenException.class);
+
+        // Two calls x three attempts reached GitHub; the short-circuited call adds none.
+        server.verify(6, getRequestedFor(urlPathEqualTo("/search/repositories")));
+    }
+
+    @Test
     void retriesTransientFailureThenSucceeds() {
         // First attempt fails with a 503, the second returns data: the retry turns
         // a transient upstream blip into a successful call.
@@ -274,10 +295,11 @@ class GitHubClientTest {
                         && event.getFormattedMessage().contains("incomplete"));
     }
 
-    // Fast retry with negligible backoff so failure-path tests exercise the retry
-    // behaviour without slowing the suite down.
+    // Fast retry with negligible backoff, and a tiny circuit-breaker window, so
+    // failure-path tests exercise the behaviour without slowing the suite down.
     private static final ResilienceProperties RESILIENCE =
-            new ResilienceProperties(3, Duration.ofMillis(1), 1.0);
+            new ResilienceProperties(3, Duration.ofMillis(1), 1.0,
+                    50.0f, 2, 2, Duration.ofSeconds(30));
 
     private GitHubClient clientWith(GitHubProperties properties) {
         return new GitHubClient(RestClient.builder(), properties, RESILIENCE);

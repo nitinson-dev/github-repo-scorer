@@ -50,6 +50,19 @@ public class ApiExceptionHandler {
         return builder.body(errorBody(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), request));
     }
 
+    @ExceptionHandler(GitHubCircuitOpenException.class)
+    public ResponseEntity<ErrorResponse> handleCircuitOpen(GitHubCircuitOpenException ex,
+                                                           HttpServletRequest request) {
+        // The breaker is open, so we're deliberately not calling GitHub: report a
+        // temporary unavailability and advise when it's worth trying again.
+        log.warn("GitHub circuit open for {}; failing fast", request.getRequestURI());
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE);
+        if (ex.retryAfter() != null) {
+            builder.header(HttpHeaders.RETRY_AFTER, Long.toString(ex.retryAfter().toSeconds()));
+        }
+        return builder.body(errorBody(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), request));
+    }
+
     @ExceptionHandler(GitHubUnavailableException.class)
     public ResponseEntity<ErrorResponse> handleGitHubUnavailable(GitHubUnavailableException ex,
                                                                  HttpServletRequest request) {
