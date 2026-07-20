@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -26,6 +27,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 import com.nitinson.reposcorer.github.GitHubClient;
 import com.nitinson.reposcorer.github.GitHubProperties;
@@ -147,6 +149,16 @@ class RepositoryControllerTest {
 
         mvc.perform(get("/api/repositories").param("createdAfter", "2023-01-01"))
                 .andExpect(status().isBadGateway());
+    }
+
+    @Test
+    void mapsRateLimitToServiceUnavailableWithRetryAfter() throws Exception {
+        when(gitHubClient.searchRepositories(any(), any(), anyInt()))
+                .thenThrow(new GitHubRateLimitException(Duration.ofSeconds(30), "rate limited", null));
+
+        mvc.perform(get("/api/repositories").param("createdAfter", "2023-01-01"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "30"));
     }
 
     @Test

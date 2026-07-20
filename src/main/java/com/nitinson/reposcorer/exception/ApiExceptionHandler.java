@@ -4,6 +4,7 @@ import java.time.Instant;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BindException;
@@ -35,6 +36,20 @@ public class ApiExceptionHandler {
         return respond(status, ex.getMessage(), request);
     }
 
+    @ExceptionHandler(GitHubRateLimitException.class)
+    public ResponseEntity<ErrorResponse> handleRateLimited(GitHubRateLimitException ex,
+                                                           HttpServletRequest request) {
+        // We aren't the one over quota — GitHub is — so this is a temporary
+        // upstream unavailability (503), and we pass GitHub's advised wait through
+        // as Retry-After so the caller can back off intelligently.
+        log.warn("GitHub rate limit hit for {}: retry after {}", request.getRequestURI(), ex.retryAfter());
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE);
+        if (ex.retryAfter() != null) {
+            builder.header(HttpHeaders.RETRY_AFTER, Long.toString(ex.retryAfter().toSeconds()));
+        }
+        return builder.body(errorBody(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), request));
+    }
+
     @ExceptionHandler(GitHubUnavailableException.class)
     public ResponseEntity<ErrorResponse> handleGitHubUnavailable(GitHubUnavailableException ex,
                                                                  HttpServletRequest request) {
@@ -60,12 +75,15 @@ public class ApiExceptionHandler {
 
     private static ResponseEntity<ErrorResponse> respond(HttpStatus status, String message,
                                                          HttpServletRequest request) {
-        ErrorResponse body = new ErrorResponse(
+        return ResponseEntity.status(status).body(errorBody(status, message, request));
+    }
+
+    private static ErrorResponse errorBody(HttpStatus status, String message, HttpServletRequest request) {
+        return new ErrorResponse(
                 Instant.now(),
                 status.value(),
                 status.getReasonPhrase(),
                 message,
                 request.getRequestURI());
-        return ResponseEntity.status(status).body(body);
     }
 }

@@ -1,5 +1,7 @@
 package com.nitinson.reposcorer.github;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,6 +20,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
 @Component
@@ -92,6 +95,10 @@ public class GitHubClient {
                     .retrieve()
                     .body(GitHubSearchResponse.class);
         } catch (RestClientResponseException e) {
+            if (isRateLimited(e)) {
+                throw new GitHubRateLimitException(retryAfter(e.getResponseHeaders()),
+                        "GitHub search rate limit exhausted", e);
+            }
             throw new GitHubApiException(e.getStatusCode(),
                     "GitHub search returned " + e.getStatusCode().value(), e);
         } catch (ResourceAccessException e) {
@@ -101,6 +108,56 @@ public class GitHubClient {
             // payload) is an upstream contract failure, not our bug: report it as a
             // bad gateway instead of letting it fall through to a generic 500.
             throw new GitHubApiException(HttpStatus.BAD_GATEWAY, "GitHub returned an unreadable response", e);
+        }
+    }
+
+    private static boolean isRateLimited(RestClientResponseException e) {
+        int status = e.getStatusCode().value();
+        if (status == HttpStatus.TOO_MANY_REQUESTS.value()) {
+            return true;
+        }
+        // A primary-rate-limit breach comes back as a 403 with the remaining quota
+        // at zero, which is what distinguishes it from an ordinary 403.
+        HttpHeaders headers = e.getResponseHeaders();
+        return status == HttpStatus.FORBIDDEN.value()
+                && headers != null
+                && "0".equals(headers.getFirst("X-RateLimit-Remaining"));
+    }
+
+    /**
+     * The wait GitHub advises before retrying: {@code Retry-After} (delta seconds,
+     * used for secondary limits) takes precedence over {@code X-RateLimit-Reset}
+     * (an epoch second, used for primary limits). Null when neither is usable.
+     */
+    private static Duration retryAfter(HttpHeaders headers) {
+        if (headers == null) {
+            return null;
+        }
+        String retryAfter = headers.getFirst(HttpHeaders.RETRY_AFTER);
+        if (retryAfter != null) {
+            return positiveSeconds(retryAfter);
+        }
+        String reset = headers.getFirst("X-RateLimit-Reset");
+        return reset == null ? null : secondsUntilEpoch(reset);
+    }
+
+    private static Duration positiveSeconds(String value) {
+        try {
+            long seconds = Long.parseLong(value.trim());
+            return seconds > 0 ? Duration.ofSeconds(seconds) : null;
+        } catch (NumberFormatException e) {
+            // Retry-After can also be an HTTP-date; GitHub sends seconds, so we
+            // don't parse the date form and simply advise no specific wait.
+            return null;
+        }
+    }
+
+    private static Duration secondsUntilEpoch(String epochSecond) {
+        try {
+            long delta = Long.parseLong(epochSecond.trim()) - Instant.now().getEpochSecond();
+            return delta > 0 ? Duration.ofSeconds(delta) : null;
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

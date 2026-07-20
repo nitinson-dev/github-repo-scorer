@@ -23,6 +23,7 @@ import org.springframework.web.client.RestClient;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.nitinson.reposcorer.exception.GitHubApiException;
+import com.nitinson.reposcorer.exception.GitHubRateLimitException;
 import com.nitinson.reposcorer.exception.GitHubUnavailableException;
 
 import ch.qos.logback.classic.Level;
@@ -147,6 +148,40 @@ class GitHubClientTest {
         assertThatThrownBy(() -> clientWith(shortReadTimeout)
                 .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
                 .isInstanceOf(GitHubUnavailableException.class);
+    }
+
+    @Test
+    void translatesTooManyRequestsToRateLimitException() {
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "42")));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOfSatisfying(GitHubRateLimitException.class,
+                        e -> assertThat(e.retryAfter()).isEqualTo(Duration.ofSeconds(42)));
+    }
+
+    @Test
+    void treatsForbiddenWithNoRemainingQuotaAsRateLimit() {
+        // GitHub reports a primary-rate-limit breach as a 403 with the remaining
+        // quota at zero, not a 429; that must not be mistaken for a plain auth error.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(403).withHeader("X-RateLimit-Remaining", "0")));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOf(GitHubRateLimitException.class);
+    }
+
+    @Test
+    void treatsPlainForbiddenAsApiError() {
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .willReturn(aResponse().withStatus(403)));
+
+        assertThatThrownBy(() -> clientWith(properties("", 100))
+                .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
+                .isInstanceOfSatisfying(GitHubApiException.class,
+                        e -> assertThat(e.status().value()).isEqualTo(403));
     }
 
     @Test
