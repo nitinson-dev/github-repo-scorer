@@ -24,5 +24,8 @@ public record ResilienceProperties(
         int minimumNumberOfCalls,
         // How long the circuit stays open before probing GitHub again; also the
         // Retry-After we advise callers while it's open.
-        Duration waitInOpenState) {
+        Duration waitInOpenState,
+        // Pause inserted between sequential page fetches to stay under GitHub's
+        // secondary (anti-abuse) rate limit. Zero disables pacing.
+        Duration interPageDelay) {
 }

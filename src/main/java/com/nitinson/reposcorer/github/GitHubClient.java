@@ -9,6 +9,7 @@ import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.http.HttpHeaders;
@@ -42,9 +43,20 @@ public class GitHubClient {
     private final Retry retry;
     private final CircuitBreaker circuitBreaker;
     private final Duration openStateWait;
+    private final Duration interPageDelay;
+    private final Sleeper sleeper;
 
+    @Autowired
     public GitHubClient(RestClient.Builder builder, GitHubProperties properties, ResilienceProperties resilience) {
+        this(builder, properties, resilience, duration -> Thread.sleep(duration.toMillis()));
+    }
+
+    // Package-private: lets tests substitute the pacing sleep so it can be asserted
+    // without the suite actually waiting.
+    GitHubClient(RestClient.Builder builder, GitHubProperties properties, ResilienceProperties resilience,
+                 Sleeper sleeper) {
         this.properties = properties;
+        this.sleeper = sleeper;
 
         ClientHttpRequestFactorySettings timeouts = ClientHttpRequestFactorySettings.defaults()
                 .withConnectTimeout(properties.connectTimeout())
@@ -64,6 +76,13 @@ public class GitHubClient {
         this.retry = buildRetry(resilience);
         this.circuitBreaker = buildCircuitBreaker(resilience);
         this.openStateWait = resilience.waitInOpenState();
+        this.interPageDelay = resilience.interPageDelay();
+    }
+
+    /** Pause before fetching a subsequent page; abstracted so tests needn't wait. */
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(Duration duration) throws InterruptedException;
     }
 
     private static Retry buildRetry(ResilienceProperties resilience) {
@@ -113,6 +132,9 @@ public class GitHubClient {
         boolean incomplete = false;
         int page = 1;
         while (repositories.size() < limit) {
+            if (page > 1) {
+                pace();
+            }
             GitHubSearchResponse response;
             try {
                 response = fetchPage(query, page);
@@ -151,6 +173,18 @@ public class GitHubClient {
                 ? new ArrayList<>(repositories.subList(0, limit))
                 : repositories;
         return new GitHubSearchResult(collected, incomplete);
+    }
+
+    private void pace() {
+        if (interPageDelay.isZero() || interPageDelay.isNegative()) {
+            return;
+        }
+        try {
+            sleeper.sleep(interPageDelay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new GitHubUnavailableException("Interrupted while paging GitHub results", e);
+        }
     }
 
     private GitHubSearchResponse fetchPage(String query, int page) {

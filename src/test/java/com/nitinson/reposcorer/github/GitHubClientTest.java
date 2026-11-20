@@ -14,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
@@ -152,6 +153,26 @@ class GitHubClientTest {
         assertThatThrownBy(() -> clientWith(shortReadTimeout)
                 .searchRepositories(LocalDate.parse("2023-01-01"), "Java", 10))
                 .isInstanceOf(GitHubUnavailableException.class);
+    }
+
+    @Test
+    void pausesBetweenPageFetchesButNotBeforeTheFirst() {
+        // GitHub trips a secondary (anti-abuse) rate limit on rapid bursts of
+        // sequential page calls, so we pace them; the first page has nothing to
+        // wait behind.
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .withQueryParam("page", equalTo("1")).willReturn(okJson(pageOf("a/1", "a/2"))));
+        server.stubFor(get(urlPathEqualTo("/search/repositories"))
+                .withQueryParam("page", equalTo("2")).willReturn(okJson(pageOf("b/1", "b/2"))));
+
+        List<Duration> pauses = new ArrayList<>();
+        ResilienceProperties paced = new ResilienceProperties(3, Duration.ofMillis(1), 1.0,
+                50.0f, 2, 2, Duration.ofSeconds(30), Duration.ofSeconds(1));
+        GitHubClient client = new GitHubClient(RestClient.builder(), properties("", 2), paced, pauses::add);
+
+        client.searchRepositories(LocalDate.parse("2023-01-01"), "Java", 4);
+
+        assertThat(pauses).containsExactly(Duration.ofSeconds(1));
     }
 
     @Test
@@ -329,11 +350,12 @@ class GitHubClientTest {
                         && event.getFormattedMessage().contains("incomplete"));
     }
 
-    // Fast retry with negligible backoff, and a tiny circuit-breaker window, so
-    // failure-path tests exercise the behaviour without slowing the suite down.
+    // Fast retry with negligible backoff, a tiny circuit-breaker window, and no
+    // inter-page pacing, so failure-path tests exercise the behaviour without
+    // slowing the suite down.
     private static final ResilienceProperties RESILIENCE =
             new ResilienceProperties(3, Duration.ofMillis(1), 1.0,
-                    50.0f, 2, 2, Duration.ofSeconds(30));
+                    50.0f, 2, 2, Duration.ofSeconds(30), Duration.ZERO);
 
     private GitHubClient clientWith(GitHubProperties properties) {
         return new GitHubClient(RestClient.builder(), properties, RESILIENCE);

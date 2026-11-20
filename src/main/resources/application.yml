@@ -45,6 +45,10 @@ github:
     sliding-window-size: 20
     minimum-number-of-calls: 10
     wait-in-open-state: 30s
+    # Pause between sequential page fetches, so a multi-page request doesn't trip
+    # GitHub's secondary (anti-abuse) rate limit. GitHub advises >= 1s between
+    # search calls; only requests with limit > page-size page at all. Zero disables.
+    inter-page-delay: 1s
   # Languages the API accepts. GitHub silently ignores an unknown language
   # qualifier and returns unfiltered results, so we reject anything outside this
   # set with a 400 rather than pass the quirk on to callers. This is a pragmatic
